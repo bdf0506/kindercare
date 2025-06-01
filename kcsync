@@ -7,7 +7,6 @@ child_id="xxxxxx"
 no_insert_db=0
 caption=0
 
-
 usage() {
         echo "Usage: $0 [ -cik xxxxxx ] " 1>&2
 }
@@ -18,105 +17,132 @@ exit_abnormal() {
 }
 
 while getopts "cik:" o; do
-	case "${o}" in
-		c)
-			caption=1
-			;;
-		i)
-			no_insert_db=1
-			;;
-		k)
-			child_id=${OPTARG}
-			;;
-		:)
-			echo "Error: -${OPTARG} requires an argument."
-			exit_abnormal
-			;;
-		*)
-			exit_abnormal
-			;;
-	esac
+        case "${o}" in
+                c)
+                        caption=1
+                        ;;
+                i)
+                        no_insert_db=1
+                        ;;
+                k)
+                        child_id=${OPTARG}
+                        ;;
+                :)
+                        echo "Error: -${OPTARG} requires an argument."
+                        exit_abnormal
+                        ;;
+                *)
+                        exit_abnormal
+                        ;;
+        esac
 done
 
-if [ ! -s $(dirname ${0})/${child_id}/id.db ]; then
-  mkdir $(dirname ${0})/${child_id}
-  mkdir /tmp/_${child_id}
-  touch $(dirname ${0})/${child_id}/id.db
+if [ ! -s "$(dirname "${0}")/${child_id}/id.db" ]; then
+  mkdir -p "$(dirname "${0}")/${child_id}"
+  mkdir -p "/tmp/_${child_id}"
+  touch "$(dirname "${0}")/${child_id}/id.db"
 fi
-
 
 done=0
 k=1
 
-until [ $done == "1" ]; do
-	wget -q --load-cookies $(dirname ${0})/cookies.txt "https://classroom.kindercare.com/accounts/${child_id}/journal_api?page=${k}" -O /tmp/_${child_id}/_act
+until [ "$done" == "1" ]; do
+        wget -q --load-cookies "$(dirname "${0}")/cookies.txt" "https://classroom.kindercare.com/accounts/${child_id}/journal_api?page=${k}" -O "/tmp/_${child_id}/_act"
 
-	jq '.intervals[] | .[].activity' /tmp/_${child_id}/_act > /tmp/_${child_id}/_jsontemp 
+        jq '.intervals[] | .[].activity' "/tmp/_${child_id}/_act" > "/tmp/_${child_id}/_jsontemp" 
 
-	if [ -s /tmp/_${child_id}/_jsontemp ]; then
-		jq '.activity_file_id' /tmp/_${child_id}/_jsontemp  > /tmp/_${child_id}/_id 
-		jq '.title' /tmp/_${child_id}/_jsontemp > /tmp/_${child_id}/_title 
-		jq '.description' /tmp/_${child_id}/_jsontemp > /tmp/_${child_id}/_desc
-		jq '.created_at' /tmp/_${child_id}/_jsontemp > /tmp/_${child_id}/_date
-		jq '.image.big.url,.video.url' /tmp/_${child_id}/_jsontemp | grep -v null  > /tmp/_${child_id}/_img
+        if [ -s "/tmp/_${child_id}/_jsontemp" ]; then
+                jq '.activity_file_id' "/tmp/_${child_id}/_jsontemp"  > "/tmp/_${child_id}/_id"
+                jq '.title' "/tmp/_${child_id}/_jsontemp" > "/tmp/_${child_id}/_title"
+                jq '.description' "/tmp/_${child_id}/_jsontemp" > "/tmp/_${child_id}/_desc"
+                jq '.created_at' "/tmp/_${child_id}/_jsontemp" > "/tmp/_${child_id}/_date"
+                jq '.image.big.url,.video.url' "/tmp/_${child_id}/_jsontemp" | grep -v null  > "/tmp/_${child_id}/_img"
 
-		sort /tmp/_${child_id}/_id > /tmp/_${child_id}/_id_new
-		
-		comm -3 --output-delimiter=+ $(dirname ${0})/${child_id}/id.db /tmp/_${child_id}/_id_new | grep + | cut -d"+" -f2 > /tmp/_${child_id}/_delta
-		
-		n=`cat /tmp/_${child_id}/_id | wc -l`
+                sort "/tmp/_${child_id}/_id" > "/tmp/_${child_id}/_id_new"
 
-		new=`cat /tmp/_${child_id}/_delta | wc -l`
+                comm -3 --output-delimiter=+ "$(dirname "${0}")/${child_id}/id.db" "/tmp/_${child_id}/_id_new" | grep + | cut -d"+" -f2 > "/tmp/_${child_id}/_delta"
 
-		if [ $new -gt 0 ]; then
-			i=1
-			until [ $i -gt $n ]; do
-				id=`head -$i /tmp/_${child_id}/_id | tail -1`  
-			 	test=`grep $id /tmp/_${child_id}/_delta`
-				
-				if [ ! -z "$test" ]; then
-					date=`head -$i /tmp/_${child_id}/_date | tail -1 | tr -d '\"'` 
-					date=`date -d$date +%Y%m%d_%H%M%S`
-					desc=`head -$i /tmp/_${child_id}/_desc | tail -1 | tr -d '\"' | tr -dc '[:alnum:][ ][.!?]\n\r'`  
-					desc=${desc/"Look what I'm doing today!"/}
-					title=`head -$i /tmp/_${child_id}/_title | tail -1 | tr -d '\"' | tr -dc "[:alnum:][ ][.!?']\n\r"`  
-					title=${title/"Look what I'm doing today!"/}
-					img=`head -$i /tmp/_${child_id}/_img | tail -1 | tr -d '\"'`  
-					
-					vidtest=`echo $img | grep "activity_file/video"`
-					if [ -z "$vidtest" ]; then
-						wget -q $img -O ${child_id}/${date}.jpg
-						exiftool -XPcomment="$desc" -title="$title $desc" ${child_id}/${date}.jpg
-						if [ "$caption" == "1" ]; then
-							size=`exiftool -ImageSize ${child_id}/${date}.jpg | cut -d: -f2 | cut -dx -f1 | cut -d\  -f2`
-							convert ${child_id}/${date}.jpg -background lightgray -size ${size}x -pointsize 20 caption:"$title $desc" -gravity center -append result.jpg
-							mv -f result.jpg ${child_id}/${date}.jpg
-						fi
-					else
-						wget -q $img -O ${child_id}/${date}.mov
-						echo "converting video"
-						ffmpeg -loglevel panic -i ${child_id}/${date}.mov -metadata title="$title $desc" ${child_id}/${date}.mp4
-						rm ${child_id}/${date}.mov
-					fi
-				else
-					done=1
-				fi
-				((i++))
-			done
-		else
-			done=1
-		fi
-		
-		((k++))
+                n=$(wc -l < "/tmp/_${child_id}/_id")
+                new=$(wc -l < "/tmp/_${child_id}/_delta")
 
-		if [ "$no_insert_db" == "0" ]; then
-			cat /tmp/_${child_id}/_delta >> $(dirname ${0})/${child_id}/id.db
-			sort -u $(dirname ${0})/${child_id}/id.db > /tmp/_${child_id}/id.db_sorted
-			mv /tmp/_${child_id}/id.db_sorted $(dirname ${0})/${child_id}/id.db
-		fi
-		rm -rf /tmp/_${child_id}/_act /tmp/_${child_id}/_id /tmp/_${child_id}/_title /tmp/_${child_id}/_desc /tmp/_${child_id}/_date /tmp/_${child_id}/_img /tmp/_${child_id}/_delta /tmp/_${child_id}/_jsontemp $(dirname ${0})/${child_id}/*.jpg_original
-	else
-		done=1
-	fi
+                if [ "$new" -gt 0 ]; then
+                        i=1
+                        until [ $i -gt $n ]; do
+                                id=$(head -$i "/tmp/_${child_id}/_id" | tail -1)  
+                                test=$(grep "$id" "/tmp/_${child_id}/_delta")
+
+                                if [ ! -z "$test" ]; then
+                                        date=$(head -$i "/tmp/_${child_id}/_date" | tail -1 | tr -d '"')
+                                        date_fmt=$(date -d"$date" +%Y%m%d_%H%M%S)
+                                        desc=$(head -$i "/tmp/_${child_id}/_desc" | tail -1 | tr -d '"' | tr -dc '[:alnum:][ ][.!?]\n\r')
+                                        desc=${desc/"Look what I'm doing today!"/}
+                                        title=$(head -$i "/tmp/_${child_id}/_title" | tail -1 | tr -d '"' | tr -dc "[:alnum:][ ][.!?']\n\r")
+                                        title=${title/"Look what I'm doing today!"/}
+                                        img=$(head -$i "/tmp/_${child_id}/_img" | tail -1 | tr -d '"')
+
+                                        vidtest=$(echo "$img" | grep "activity_file/video")
+                                        if [ -z "$vidtest" ]; then
+                                                echo "Downloading image to ${child_id}/${date_fmt}.jpg"
+                                                wget -q "$img" -O "${child_id}/${date_fmt}.jpg"
+                                                ls -l "${child_id}/${date_fmt}.jpg"
+
+                                                exiftool -XPcomment="$desc" -Description="$desc" -title="$title $desc" "${child_id}/${date_fmt}.jpg"
+                                                if [ "$caption" == "1" ]; then
+                                                        size=$(exiftool -ImageSize "${child_id}/${date_fmt}.jpg" | cut -d: -f2 | cut -dx -f1 | cut -d' ' -f2)
+                                                        convert "${child_id}/${date_fmt}.jpg" -background lightgray -size "${size}x" -pointsize 20 caption:"$title $desc" -gravity center -append result.jpg
+                                                        mv -f result.jpg "${child_id}/${date_fmt}.jpg"
+                                                fi
+                                                # Set the timestamp after all modifications:
+                                                touch -d "$(date -d "$date" '+%Y-%m-%d %H:%M:%S')" "${child_id}/${date_fmt}.jpg"
+                                                ls -l "${child_id}/${date_fmt}.jpg"
+
+                                        else
+                                                echo "Downloading video to ${child_id}/${date_fmt}.mov"
+                                                wget -q "$img" -O "${child_id}/${date_fmt}.mov"
+                                                ls -l "${child_id}/${date_fmt}.mov"
+                                                echo -n "Converting video... "
+
+                                                spinner="/-\|"
+                                                spin_i=0
+
+                                                ffmpeg -hide_banner -loglevel error -progress pipe:1 -i "${child_id}/${date_fmt}.mov" -metadata title="$title $desc" "${child_id}/${date_fmt}.mp4" 2>&1 | \
+                                                while IFS='=' read -r key value; do
+                                                  case "$key" in
+                                                    progress)
+                                                      if [ "$value" = "continue" ]; then
+                                                        printf "\rConverting video... %c" "${spinner:spin_i++%${#spinner}:1}"
+                                                      elif [ "$value" = "end" ]; then
+                                                        echo -e "\rConverting video... done.     "
+                                                      fi
+                                                      ;;
+                                                  esac
+                                                done
+
+                                                rm -f "${child_id}/${date_fmt}.mov"
+                                                # Set the timestamp on the final mp4 file:
+                                                touch -d "$(date -d "$date" '+%Y-%m-%d %H:%M:%S')" "${child_id}/${date_fmt}.mp4"
+                                                ls -l "${child_id}/${date_fmt}.mp4"
+                                        fi
+                                else
+                                        done=1
+                                fi
+                                ((i++))
+                        done
+                else
+                        done=1
+                fi
+
+                ((k++))
+
+                if [ "$no_insert_db" == "0" ]; then
+                        cat "/tmp/_${child_id}/_delta" >> "$(dirname "${0}")/${child_id}/id.db"
+                        sort -u "$(dirname "${0}")/${child_id}/id.db" > "/tmp/_${child_id}/id.db_sorted"
+                        mv "/tmp/_${child_id}/id.db_sorted" "$(dirname "${0}")/${child_id}/id.db"
+                fi
+
+                rm -f /tmp/_${child_id}/_act /tmp/_${child_id}/_id /tmp/_${child_id}/_title /tmp/_${child_id}/_desc /tmp/_${child_id}/_date /tmp/_${child_id}/_img /tmp/_${child_id}/_delta /tmp/_${child_id}/_jsontemp
+                rm -f "$(dirname "${0}")/${child_id}"/*.jpg_original
+        else
+                done=1
+        fi
 done
-
